@@ -1,0 +1,51 @@
+from datetime import datetime
+
+from src.common.  import  
+from src.common.builder import Builder
+from src.common.logger import get_logger
+from src.common.spak_utils import get_spark_instance, write_df_as_json
+from src.common.spark_streaming import SparkStreaming
+
+log = get_logger(__name__)
+
+
+def process_event_data(rdd, config):
+    try:
+        log.info("--This is process_event_data v 7.0--")
+        date_today = datetime.now()
+        s3_path = """s3://{bucket_name}/{key}/year={y}/month={m}/date={d}/hour={h}""".format(
+            bucket_name=config.output_source.bucket_name,
+            key=config.output_source.key,
+            file_name=config.output_source.file_name,
+            y=str(date_today.year), m=str(date_today.month), d=str(date_today.day), h=str(date_today.time().hour))
+        log.info(f'''s3 Path---{s3_path}''')
+
+        if not rdd.isEmpty():
+            log.info(f'''Reading Incoming Events data''')
+            spark = get_spark_instance(rdd.context.getConf())
+            json_df = spark.read.json(rdd)
+            log.info("Write json files")
+            write_df_as_json(json_df, s3_path)
+        else:
+            log.info("--Empty RDD--")
+    except Exception as e:
+        raise e
+
+
+class  EventBuilder(Builder):
+
+    def build(self):
+        stream_session = SparkStreaming(self.config,
+                                        self.config.streamingConfiguration, self.spark)
+        ssc = stream_session.create_stream_context(process_event_data)
+        spark_context = ssc.sparkContext
+
+        try:
+            ssc.start()
+            ssc.awaitTermination()
+
+        except Exception as e:
+            log.warn(f'''Exception in EventBuilder {e}''')
+            ssc.stop()
+            #spark_context.stop()
+            raise  Exception(e)
